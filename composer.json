@@ -1,0 +1,22 @@
+{
+    "name": "lifetime/swoole-amqp",
+    "description": "swoole based RabbitMQ client",
+    "type": "library",
+    "version": "1.0.0",
+    "authors": [
+        {
+            "name": "LifetimeNine",
+            "email": "2390904403@qq.com"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "swooleamqp\\": "src"
+        }
+    },
+    "minimum-stability": "dev",
+    "require": {
+        "lifetime/swoole-server": "^1.0",
+        "enqueue/amqp-ext": "^0.10.4"
+    }
+}
