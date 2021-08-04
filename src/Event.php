@@ -3,7 +3,7 @@
  * @Description   事件
  * @Author        lifetime
  * @Date          2021-07-19 19:14:41
- * @LastEditTime  2021-07-27 14:31:49
+ * @LastEditTime  2021-08-03 14:39:37
  * @LastEditors   lifetime
  */
 namespace swooleamqp;
@@ -44,7 +44,7 @@ class Event extends TcpUdp
                         self::writeError($server, $item, $e);
                     }
                 }
-                $server->tick(100, function() use($server, &$queueList, &$errorList){
+                $server->tick(100, function() use($server, &$queueList){
                     $newQueueList = [];
                     foreach($queueList as $queue) {
                         try {

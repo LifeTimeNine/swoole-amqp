@@ -3,7 +3,7 @@
  * @Description   队列抽象类
  * @Author        lifetime
  * @Date          2021-07-19 14:41:05
- * @LastEditTime  2021-07-27 14:16:28
+ * @LastEditTime  2021-08-04 16:33:18
  * @LastEditors   lifetime
  */
 namespace swooleamqp;
@@ -84,6 +84,12 @@ abstract class Queue
     protected static $instances;
 
     /**
+     * 连接实例列表
+     * @var array
+     */
+    protected $connects;
+
+    /**
      * 连接实例
      * @var \Enqueue\AmqpExt\AmqpContext
      */
@@ -139,6 +145,21 @@ abstract class Queue
     {
         return $this->queue;
     }
+    
+    /**
+     * 构建单例连接
+     */
+    protected function buildConnect()
+    {
+        $key = md5(get_called_class() . serialize($this->connectParams));
+        if (isset($this->connects[$key])) {
+            $this->connect = $this->connects[$key];
+        } else {
+            $factory = new AmqpConnectionFactory($this->connectParams);
+            $this->connect = $factory->createContext();
+            $this->connects[$key] = $this->connect;
+        }
+    }
 
     /**
      * 创建 Topic
@@ -177,8 +198,7 @@ abstract class Queue
      */
     public function createConsumer()
     {
-        $factory = new AmqpConnectionFactory($this->connectParams);
-        $this->connect = $factory->createContext();
+        $this->buildConnect();
         $topic = $this->createTopic();
         $queue = $this->createQueue();
         $this->connect->bind(new AmqpBind($topic, $queue, $this->bindRoutingKey));
@@ -209,8 +229,7 @@ abstract class Queue
             'time' => time(),
             'delay' => $this->delay * 1000
         ];
-        $factory = new AmqpConnectionFactory($this->connectParams);
-        $this->connect = $factory->createContext();
+        $this->buildConnect();
         $message = $this->connect->createMessage(serialize($msgData));
         if (!empty($this->msgRoutingKey)) {
             $message->setRoutingKey($this->msgRoutingKey);
