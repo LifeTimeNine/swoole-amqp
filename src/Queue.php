@@ -3,7 +3,7 @@
  * @Description   队列抽象类
  * @Author        lifetime
  * @Date          2021-07-19 14:41:05
- * @LastEditTime  2021-08-04 16:33:18
+ * @LastEditTime  2021-08-05 08:59:51
  * @LastEditors   lifetime
  */
 namespace swooleamqp;
@@ -87,7 +87,7 @@ abstract class Queue
      * 连接实例列表
      * @var array
      */
-    protected $connects;
+    protected static $connects;
 
     /**
      * 连接实例
@@ -152,12 +152,12 @@ abstract class Queue
     protected function buildConnect()
     {
         $key = md5(get_called_class() . serialize($this->connectParams));
-        if (isset($this->connects[$key])) {
-            $this->connect = $this->connects[$key];
+        if (isset(self::$connects[$key])) {
+            $this->connect = self::$connects[$key];
         } else {
             $factory = new AmqpConnectionFactory($this->connectParams);
             $this->connect = $factory->createContext();
-            $this->connects[$key] = $this->connect;
+            self::$connects[$key] = $this->connect;
         }
     }
 
