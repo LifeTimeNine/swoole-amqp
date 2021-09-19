@@ -3,7 +3,7 @@
  * @Description   事件
  * @Author        lifetime
  * @Date          2021-07-19 19:14:41
- * @LastEditTime  2021-08-03 14:39:37
+ * @LastEditTime  2021-09-19 08:50:16
  * @LastEditors   lifetime
  */
 namespace swooleamqp;
@@ -130,7 +130,7 @@ class Event extends TcpUdp
             if (!is_dir($server->config['log_path'])) mkdir($server->config['log_path'], 0777, true);
             $fileName = date('Y-m-d') . '.log';
             $queue = $data['class']::instance();
-            $file = fopen($server->config['log_path'] . $fileName, 'a');
+            $file = fopen("{$server->config['log_path']}/{$fileName}", 'a');
             flock($file, LOCK_EX);
             fwrite($file, str_pad('', 50, '-') . PHP_EOL);
             fwrite($file, "[ TIME ] " . date('Y-m-d H:i:s') . PHP_EOL);
