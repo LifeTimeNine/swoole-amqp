@@ -44,6 +44,10 @@ class MyQueue extends Queue
     protected $msgRoutingKey = 'abc.edf';
     // 队列绑定路由 Key
     protected $bindRoutingKey = 'abc.#';
+    // 消费等待时间 （秒）
+    protected $waitTime = 1;
+    // 是否是调试模式, 调试模式不发送消息，直接执行handle方法
+    protected $debug = false;
     /**
      * 逻辑函数
      * @param   mixed   $data       消息数据
