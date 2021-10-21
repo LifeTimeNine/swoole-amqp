@@ -3,7 +3,7 @@
  * @Description   消费者服务
  * @Author        lifetime
  * @Date          2021-07-19 14:13:04
- * @LastEditTime  2021-07-27 14:24:19
+ * @LastEditTime  2021-10-21 15:33:01
  * @LastEditors   lifetime
  */
 namespace swooleamqp;
@@ -29,7 +29,7 @@ class Server
         'log_path' => '', // 日志文件地址
         'daemonize' => false, // 以守护进程的方式运行
         'hit_update' => true, // 热更新
-        'error_recover_time' => 30, // 异常恢复时间 (0 表示关闭此功能)
+        'error_recover_time' => 10, // 异常恢复时间 (0 表示关闭此功能)
     ];
     /**
      * 服务器实例
@@ -97,52 +97,12 @@ class Server
         return $this;
     }
     /**
-     * 热更新
-     */
-    protected function hitUpdate()
-    {
-        if ($this->config['hit_update']) {
-            $queueFilePath = $this->config['queue_file_path'];
-            $server = $this->server->getServer();
-            $server->addProcess(new \Swoole\Process(function ($process) use ($server, $queueFilePath) {
-                $fileList = [$queueFilePath => filectime($queueFilePath)];
-                $server->tick(1000, function($timeId) use($server, &$fileList, $queueFilePath) {
-                    $queueFile = require($queueFilePath);
-                    $update = false;
-                    if ($fileList[$queueFilePath] <> filectime($queueFilePath)) {
-                        $fileList[$queueFilePath] = filectime($queueFilePath);
-                        $update = true;
-                    }
-                    if (is_array($queueFile) && count($queueFile) > 0) {
-                        foreach($queueFile as $item) {
-                            if (!class_exists($item)) continue;
-                            $ref = new \ReflectionClass($item);
-                            $filePath = $ref->getFileName();
-                            if (!isset($fileList[$filePath])) {
-                                $fileList[$filePath] = filectime($filePath);
-                            }
-                            if ($fileList[$filePath] <> filectime($filePath)) {
-                                $fileList[$filePath] = filectime($filePath);
-                                $update = true;
-                            }
-                        }
-                    }
-                    if (count($fileList) == 1) clearstatcache();
-                    if ($update) {
-                        $server->reload();
-                    }
-                });
-            }));
-        }
-    }
-    /**
      * 启动服务器
      */
     public function start()
     {
         $this->server->initServer();
         $this->server->getServer()->config = $this->config;
-        $this->hitUpdate();
         $this->server->start();
     }
     /**
@@ -164,7 +124,9 @@ class Server
      */
     public function restart()
     {
-        $this->server->restart();
+        $this->server->restart(function($server) {
+            $server->config = $this->config;
+        });
     }
     /**
      * 删除PID文件

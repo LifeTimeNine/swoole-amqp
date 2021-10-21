@@ -3,7 +3,7 @@
  * @Description   事件
  * @Author        lifetime
  * @Date          2021-07-19 19:14:41
- * @LastEditTime  2021-09-19 08:50:16
+ * @LastEditTime  2021-10-21 15:40:07
  * @LastEditors   lifetime
  */
 namespace swooleamqp;
@@ -27,65 +27,99 @@ class Event extends TcpUdp
     {
         if (!$server->taskworker) {
             $queueFile = require($server->config['queue_file_path']);
-            if (is_array($queueFile) && count($queueFile) > 0) {
-                $queueList = [];
-                foreach($queueFile as $item) {
-                    if (!class_exists($item)) continue;
-                    try {
-                        $queue = $item::instance();
-                        if (!$queue->getEnable()) continue;
-                        $queueList[] = [
-                            'class' => $item,
-                            'queue' => $queue,
-                            'consumer' => $queue->createConsumer(),
-                        ];
-                    } catch(\Exception $e) {
-                        self::errorRecover($server, $item, $queueList);
-                        self::writeError($server, $item, $e);
-                    }
-                }
-                $server->tick(100, function() use($server, &$queueList){
-                    $newQueueList = [];
-                    foreach($queueList as $queue) {
+            // 初始化数量
+            $initNum = 0;
+            if (is_array($queueFile)) {
+                // 异常队列列表
+                $errorQueue = [];
+                // 文件最后修改时间数组
+                $fileTimes = [$server->config['queue_file_path'] => filectime($server->config['queue_file_path'] )];
+                // 遍历队列列表
+                foreach($queueFile as $class) {
+                    // 如果类不存在，跳过
+                    if (!class_exists($class)) continue;
+                    /**
+                     * 实例化
+                     * @var \swooleamqp\Queue
+                     */
+                    $queue = $class::instance();
+                    // 通过映射类获取文件名称
+                    $filePath = (new \ReflectionClass($class))->getFileName();
+                    // 记录文件最后修改时间
+                    $fileTimes[$filePath] = filectime($filePath);
+                    // 如果是禁用状态，跳过
+                    if (!$queue->getEnable()) continue;
+                    
+                    // 创建定时器
+                    $server->tick($queue->getWaitTime() * 1000, function() use($server, $class, $queue, &$errorQueue) {
+                        // 如果在异常列表中
+                        if (isset($errorQueue[$class])) {
+                            // 如果在异常恢复时间之内，跳出
+                            if (time() - $errorQueue[$class] < $server->config['error_recover_time']) {
+                                return;
+                            }
+                        }
                         try {
-                            if ($message = $queue['consumer']->receiveNoWait()) {
+                            // 创建订阅者
+                            $consumer = $queue->createConsumer();
+                            // 如果获取到新的消息
+                            if ($message = $consumer->receiveNoWait()) {
+                                $msg = unserialize($message->getBody());
+                                // 异步任务执行逻辑
                                 $server->task([
-                                    'class' => $queue['class'],
-                                    'msg' => unserialize($message->getBody()),
-                                ], null, function($server, $task_id, $data) use($queue, $message){
-                                    if ($data['result'] !== false) $queue['consumer']->acknowledge($message);
-                                    self::writeLog($server, $data);
+                                    'class' => $class,
+                                    'msg' => $msg,
+                                ], null, function($server, $taskId, $data) use($queue, $consumer, $message, $msg){
+                                    // 如果执行成功，上报
+                                    if ($data['result']) $consumer->acknowledge($message);
+                                    // 记录日志
+                                    self::recordLog($server, $queue, $msg, $data);
                                 });
                             }
-                            $newQueueList[]  = $queue;
+                            if (isset($errorQueue[$class])) {
+                                unset($errorQueue[$class]);
+                                self::output("[ {$class} ] restored");
+                            }
                         } catch(\Exception $e) {
-                            self::errorRecover($server, $queue['class'], $queueList);
-                            self::writeError($server, $queue['class'], $e);
+                            if (!isset($errorQueue[$class])) {
+                                self::output("[ {$class} ] exception");
+                            }
+                            $errorQueue[$class] = time();
+                            self::recordLog($server, $queue, null, null, $e);
                         }
-                    }
-                    if (count($newQueueList) <> count($queueList)) $queueList = $newQueueList;
-                });
-                self::output(count($queueList) . " queues initialized");
-            } else {
-                self::output("0 queues initialized");
+                    });
+                    $initNum ++;
+                }
+                // 如果开启了热更新
+                if (!empty($server->config['hit_update'])) {
+                    $server->tick(1000, function() use($server, $fileTimes){
+                        if (count($fileTimes) == 1) clearstatcache();
+                        foreach($fileTimes as $path => $lastUpdateTime) {
+                            if ($lastUpdateTime <> filectime($path)) {
+                                $server->reload();
+                            }
+                        }
+                    });
+                }
             }
-            
+            self::output("{$initNum} queues initialized");
         }
     }
     public static function onTask($server, int $task_id, int $src_worker_id, $data)
     {
         $queue = $data['class']::instance();
-        try {
-            $result = $queue->handle($data['msg']['data'], $data['msg']);
-        } catch(\Throwable $th) {
-            $result = false;
-        }
-        $data = [
-            'class' => $data['class'],
-            'msg' => $data['msg'],
-            'result' => $result,
+        $result = [
+            'result' => true,
+            'error' => false,
         ];
-        $server->finish($data);
+        try {
+            $result['result'] = ($queue->execHandle($data['msg']) !== false);
+        } catch(\Throwable $th) {
+            $result['result'] = false;
+            $result['error'] = true;
+            $result['error_msg'] = $th->getMessage();
+        }
+        $server->finish($result);
     }
 
     public static function onWorkerExit($server, int $workerId)
@@ -94,74 +128,37 @@ class Event extends TcpUdp
     }
 
     /**
-     * 异常恢复
-     * @param   \Swoole\server  $server
-     * @param   string  $class
-     * @param   array   $queueList
+     * 记录日志
+     * @param   \Swoole\Server      $server
+     * @param   \swooleamqp\Queue   $queue
+     * @param   array               $msg
+     * @param   array               $result
+     * @param   \Throwable          $th
      */
-    protected static function errorRecover($server, $class, &$queueList)
+    protected static function recordLog($server, $queue, $msg = null, $result = null, $th = null)
     {
-        if ($server->config['error_recover_time'] > 0) {
-            $server->after($server->config['error_recover_time'] * 1000, function() use($server, $class, &$queueList){
-                try {
-                    $queue = $class::instance();
-                    if (!$queue->getEnable()) return;
-                    $queueList[] = [
-                        'class' => $class,
-                        'queue' => $queue,
-                        'consumer' => $queue->createConsumer(),
-                    ];
-                } catch(\Exception $e) {
-                    self::errorRecover($server, $class, $queueList);
-                    self::writeError($server, $class, $e);
+        if (!empty($path = $server->config['log_path'])) {
+            $path = date('Ym') . DIRECTORY_SEPARATOR . date('d') . DIRECTORY_SEPARATOR;
+            if (!is_dir($path)) mkdir($path, 0777, true);
+            $fileName = basename(str_replace('\\', '/', get_class($queue))) . '.log';
+            $file = fopen($path . $fileName, 'a');
+            flock($file, LOCK_EX);
+            fwrite($file, str_pad('', 100, '-') . PHP_EOL);
+            fwrite($file, "[ TIME ] " . date('Y-m-d H:i:s') . PHP_EOL);
+            fwrite($file, "[ TOPIC ] " . $queue->getTopic() . PHP_EOL);
+            fwrite($file, "[ QUEUE ] " . $queue->getQueue() . PHP_EOL);
+            if (!empty($msg)) {
+                fwrite($file, "[ MESSAGE ] " . var_export($msg, true) . PHP_EOL);
+            }
+            if (!empty($result)) {
+                fwrite($file, "[ RESULT ] " . ($result['result'] ? 'TRUE' : 'FALSE') . PHP_EOL);
+                if ($result['error']) {
+                    fwrite($file, "[ ERROR ] " . $result['error_msg'] . PHP_EOL);
                 }
-            });
-        }
-    }
-
-    /**
-     * 写入日志
-     * @param   \Swoole\Server
-     * @param   array   $data
-     */
-    protected static function writeLog($server, $data)
-    {
-        if (!empty($server->config['log_path'])) {
-            if (!is_dir($server->config['log_path'])) mkdir($server->config['log_path'], 0777, true);
-            $fileName = date('Y-m-d') . '.log';
-            $queue = $data['class']::instance();
-            $file = fopen("{$server->config['log_path']}/{$fileName}", 'a');
-            flock($file, LOCK_EX);
-            fwrite($file, str_pad('', 50, '-') . PHP_EOL);
-            fwrite($file, "[ TIME ] " . date('Y-m-d H:i:s') . PHP_EOL);
-            fwrite($file, "[ CLASS ] {$data['class']}" . PHP_EOL);
-            fwrite($file, "[ TOPIC ] {$queue->getTopic()}" . PHP_EOL);
-            fwrite($file, "[ QUEUE ] {$queue->getQueue()}" . PHP_EOL);
-            fwrite($file, "[ MESSAGE ] " . var_export($data['msg'], true) . PHP_EOL);
-            fwrite($file, "[ RESULT ] " . ($data['result'] !== false ? 'TRUE' : 'FALSE') . PHP_EOL);
-            flock($file, LOCK_UN);
-            fclose($file);
-        }
-    }
-
-    /**
-     * 写入异常日志
-     * @param   \Swoole\server
-     * @param   string  $queue
-     * @param   \Exception  $e
-     */
-    protected static function writeError($server, $queue, $e)
-    {
-        if (!empty($server->config['log_path'])) {
-            if (!is_dir($server->config['log_path'])) mkdir($server->config['log_path'], 0777, true);
-            $fileName = date('Y-m-d') . '_error.log';
-            $file = fopen($server->config['log_path'] . $fileName, 'a');
-            flock($file, LOCK_EX);
-            fwrite($file, str_pad('', 50, '-') . PHP_EOL);
-            fwrite($file, "[ TIME ] " . date('Y-m-d H:i:s') . PHP_EOL);
-            fwrite($file, "[ CLASS ] {$queue}" . PHP_EOL);
-            fwrite($file, "[ MESSAGE ] {$e->getMessage()}" . PHP_EOL);
-            fwrite($file, "[ EXCEPTION ] {$e}" . PHP_EOL);
+            }
+            if (!empty($th)) {
+                fwrite($file, "[ ERROR ] " . $th->getMessage() . PHP_EOL);
+            }
             flock($file, LOCK_UN);
             fclose($file);
         }

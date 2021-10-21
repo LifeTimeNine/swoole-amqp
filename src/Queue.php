@@ -3,7 +3,7 @@
  * @Description   队列抽象类
  * @Author        lifetime
  * @Date          2021-07-19 14:41:05
- * @LastEditTime  2021-08-05 08:59:51
+ * @LastEditTime  2021-10-21 15:43:12
  * @LastEditors   lifetime
  */
 namespace swooleamqp;
@@ -68,14 +68,23 @@ abstract class Queue
      * @var string
      */
     protected $bindRoutingKey = '';
+    /**
+     * 消费等待时间 （秒）
+     * @var int
+     */
+    protected $waitTime = 1;
+    /**
+     * 是否是调试模式
+     * @var bool
+     */
+    protected $debug = false;
 
     /**
      * 业务逻辑
      * @param   mixed   $data
-     * @param   array   $message
      * @return  boolean
      */
-    abstract public function handle($data, $message);
+    abstract protected function handle($data);
 
     /**
      * 实例列表
@@ -100,6 +109,12 @@ abstract class Queue
      * @var int
      */
     protected $delay = 0;
+
+    /**
+     * 完整数据
+     * @var array
+     */
+    protected $fullData;
 
     /**
      * 静态实例化
@@ -144,6 +159,24 @@ abstract class Queue
     public function getQueue()
     {
         return $this->queue;
+    }
+
+    /**
+     * 获取消费等待时间（秒）
+     * @return int
+     */
+    public function getWaitTime()
+    {
+        return $this->waitTime;
+    }
+
+    /**
+     * 获取完整数据
+     * @return array
+     */
+    public function getFullData()
+    {
+        return $this->fullData;
     }
     
     /**
@@ -206,6 +239,17 @@ abstract class Queue
     }
 
     /**
+     * 执行逻辑
+     * @pamra   array   $fullData
+     * @return bool
+     */
+    public function execHandle($fullData)
+    {
+        $this->fullData = $fullData;
+        return $this->handle($fullData['data']);
+    }
+
+    /**
      * 设置延时时间
      * @param   int $delay
      * @return  $this
@@ -222,15 +266,18 @@ abstract class Queue
      */
     public function send($msg)
     {
-        $msgData = [
+        $this->fullData = [
             'uuid' => uniqid($this->topic),
             'data' => $msg,
             'class' => get_called_class(),
             'time' => time(),
             'delay' => $this->delay * 1000
         ];
+        if ($this->debug) {
+            return $this->handle($msg);
+        }
         $this->buildConnect();
-        $message = $this->connect->createMessage(serialize($msgData));
+        $message = $this->connect->createMessage(serialize($this->fullData));
         if (!empty($this->msgRoutingKey)) {
             $message->setRoutingKey($this->msgRoutingKey);
         }
