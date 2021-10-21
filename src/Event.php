@@ -3,7 +3,7 @@
  * @Description   事件
  * @Author        lifetime
  * @Date          2021-07-19 19:14:41
- * @LastEditTime  2021-10-21 15:40:07
+ * @LastEditTime  2021-10-21 15:51:32
  * @LastEditors   lifetime
  */
 namespace swooleamqp;
@@ -138,12 +138,12 @@ class Event extends TcpUdp
     protected static function recordLog($server, $queue, $msg = null, $result = null, $th = null)
     {
         if (!empty($path = $server->config['log_path'])) {
-            $path = date('Ym') . DIRECTORY_SEPARATOR . date('d') . DIRECTORY_SEPARATOR;
+            $path = $path . date('Ym') . DIRECTORY_SEPARATOR . date('d') . DIRECTORY_SEPARATOR;
             if (!is_dir($path)) mkdir($path, 0777, true);
             $fileName = basename(str_replace('\\', '/', get_class($queue))) . '.log';
             $file = fopen($path . $fileName, 'a');
             flock($file, LOCK_EX);
-            fwrite($file, str_pad('', 100, '-') . PHP_EOL);
+            fwrite($file, str_pad('', 60, '-') . PHP_EOL);
             fwrite($file, "[ TIME ] " . date('Y-m-d H:i:s') . PHP_EOL);
             fwrite($file, "[ TOPIC ] " . $queue->getTopic() . PHP_EOL);
             fwrite($file, "[ QUEUE ] " . $queue->getQueue() . PHP_EOL);
